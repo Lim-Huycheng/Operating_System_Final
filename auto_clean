@@ -1,0 +1,25 @@
+#!/bin/bash
+
+TRASH_DIR="/tmp/trash"
+LOG_FILE="$TRASH_DIR/trash.log"
+CLEANUP_LOG="$TRASH_DIR/trash-cleanup.log"
+MAX_AGE_DAYS=7
+
+# Ensure log directory exists
+mkdir -p "$TRASH_DIR"
+touch "$LOG_FILE" "$CLEANUP_LOG"
+
+echo "[INFO] $(date) Auto-clean started." >> "$CLEANUP_LOG"
+
+# Clean files/dirs older than X days
+find "$TRASH_DIR" -mindepth 1 -name "*__20*" -mtime +$MAX_AGE_DAYS -print0 |
+while IFS= read -r -d '' file; do
+  echo "[DELETE] $(date) -> $file" >> "$CLEANUP_LOG"
+  rm -rf "$file"
+
+  # Mark as auto-deleted in log
+  sed -i "s|\"$file\"|\"$file (AUTO-DELETED)\"|" "$LOG_FILE"
+done
+
+echo "[INFO] $(date) Auto-clean completed." >> "$CLEANUP_LOG"
+

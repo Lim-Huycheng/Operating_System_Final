@@ -1,0 +1,83 @@
+#!/bin/bash
+
+TRASH_DIR="/tmp/trash"
+LOG_FILE="$TRASH_DIR/trash.log"
+MAX_AGE_DAYS=7
+
+usage() {
+  echo "Usage: rm [-r] file1 [file2 ...]"
+  echo "  -r    recursive deletion for directories"
+  exit 1
+}
+
+# Ensure trash directory and log exist
+mkdir -p "$TRASH_DIR"
+touch "$LOG_FILE"
+
+# 🔥 AUTO-CLEAN TRASH OLDER THAN X DAYS
+find "$TRASH_DIR" -mindepth 1 -type f -mtime +$MAX_AGE_DAYS -print0 | while IFS= read -r -d '' file; do
+  echo "🗑️  Deleting old trash: $file"
+  rm -f "$file"
+ echo "$(date -Iseconds),\"AUTO-DELETED\",\"$file\"" >> "$LOG_FILE"   
+done
+
+# Parse flags and arguments
+RECURSIVE=0
+args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -r) RECURSIVE=1; shift ;;
+    --) shift; break ;;
+    -*) usage ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+
+if [ ${#args[@]} -eq 0 ]; then
+  usage
+fi
+
+timestamp() {
+  date +"%Y%m%d%H%M%S"
+}
+
+move_to_trash() {
+  local target="$1"
+
+  if [ ! -e "$target" ]; then
+    echo "rm: cannot remove '$target': No such file or directory"
+    return 1
+  fi
+
+  if [ -d "$target" ] && [ "$RECURSIVE" -ne 1 ]; then
+    echo "rm: cannot remove '$target': Is a directory (use -r to remove directories)"
+    return 1
+  fi
+
+  local abs_path
+  abs_path=$(realpath "$target")
+
+  local base
+  base=$(basename "$target")
+  local ts
+  ts=$(timestamp)
+  local trash_name="${base}__${ts}"
+  local trash_path="$TRASH_DIR/$trash_name"
+
+  mv "$target" "$trash_path"
+  if [ $? -ne 0 ]; then
+    echo "rm: failed to move '$target' to trash"
+    return 1
+  fi
+
+  echo "$(date -Iseconds),\"$abs_path\",\"$trash_path\"" >> "$LOG_FILE"
+  return 0
+}
+
+EXIT_CODE=0
+for f in "${args[@]}"; do
+  move_to_trash "$f" || EXIT_CODE=1
+done
+
+exit $EXIT_CODE

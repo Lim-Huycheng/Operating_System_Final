@@ -1,0 +1,81 @@
+#!/bin/bash
+
+TRASH_DIR="/tmp/trash"
+LOG_FILE="$TRASH_DIR/trash.log"
+
+usage() {
+  echo "Usage: restore <filename or partial match>"
+  exit 1
+}
+
+if [ $# -lt 1 ]; then
+  usage
+fi
+
+search_term="$*"
+
+if [ ! -f "$LOG_FILE" ]; then
+  echo "❌ No trash log found."
+  exit 1
+fi
+
+# Collect matching log entries
+matches=()
+while IFS=, read -r timestamp original_path trash_path; do
+  original_path=${original_path//\"/}
+  trash_path=${trash_path//\"/}
+  if [[ "$original_path" == *"$search_term"* ]]; then
+    matches+=("$timestamp|$original_path|$trash_path")
+  fi
+done < "$LOG_FILE"
+
+if [ ${#matches[@]} -eq 0 ]; then
+  echo "❌ No matches found for '$search_term' in trash."
+  exit 1
+fi
+
+# Choose a match
+if command -v fzf >/dev/null 2>&1; then
+  selected=$(printf "%s\n" "${matches[@]}" | awk -F'|' '{print $1 " " $2 " => " $3}' | fzf --prompt="🗂  Select file to restore: ")
+else
+  selected=$(printf "%s\n" "${matches[@]}" | tail -n 1 | awk -F'|' '{print $1 " " $2 " => " $3}')
+  echo "📌 Auto-selected most recent match:"
+  echo "$selected"
+fi
+
+if [ -z "$selected" ]; then
+  echo "⚠️  Restore cancelled."
+  exit 0
+fi
+
+# Parse original and trash path
+orig=$(echo "$selected" | awk -F' => ' '{print $1}' | cut -d' ' -f2-)
+trash=$(echo "$selected" | awk -F' => ' '{print $2}')
+
+if [ ! -e "$trash" ]; then
+  echo "❌ Restore failed: file '$trash' not found in trash."
+  exit 1
+fi
+
+# Create destination directory if needed
+dest_dir=$(dirname "$orig")
+mkdir -p "$dest_dir"
+
+# Handle conflict if file exists at destination
+if [ -e "$orig" ]; then
+  echo "⚠️  Warning: '$orig' already exists. Renaming restored file."
+  base=$(basename "$orig")
+  newname="${base}_restored_$(date +%s)"
+  orig="$dest_dir/$newname"
+fi
+
+# Restore the file
+mv "$trash" "$orig"
+if [ $? -eq 0 ]; then
+  echo "✅ Restored to: $orig"
+  # Remove entry from log
+  grep -v "\"$trash\"" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
+else
+  echo "❌ Failed to restore '$orig'"
+  exit 1
+fi
